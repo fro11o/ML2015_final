@@ -1,0 +1,243 @@
+#include <iostream>
+#include <cstring>
+#include <vector>
+#include <string>
+#include <fstream>
+#include <sstream>
+#include <ctime>
+#include <random>
+#include <climits>
+using namespace std;
+
+const int MAXN = 100000;
+const int MAXL = 10;
+const int MAXD = 100;
+const double eps = 1e-9;
+
+vector<string> D;
+vector<int> X[MAXN];
+vector<int> Y;
+vector<int> DIM;
+double NN_X[MAXL][MAXD];
+double DELTA[MAXL][MAXD];
+double W[MAXL][MAXD][MAXD];
+double TMP_W[MAXL][MAXD][MAXD];
+vector<double> SCALE;
+vector<double> MIN;
+
+void read_data(string f_name) {
+	ifstream f;
+	f.open(f_name);
+	string fstr;
+	while(getline(f, fstr)) {
+		D.push_back(fstr);
+	}
+	f.close();
+}
+
+void parse_data() {
+	for(int i = 0; i < D.size(); ++i) {
+		stringstream ss(D[i]);
+		vector<string> v;
+		string tmp;
+		while(ss >> tmp) {
+			v.push_back(tmp);
+		}
+		//cout << D[i] << endl;
+		Y.push_back(stoi(v[0]));
+		for(int j = 1; j < v.size(); ++j) {
+			int idx = 0;
+			while(v[j][idx] != ':') {
+				++idx;
+			}
+			string sub = v[j].substr(idx + 1);
+			X[i].push_back(stoi(sub));
+		}
+	}
+}
+
+void scale_data() {
+	for(int i = 0; i < X[0].size(); ++i) {
+		int ma = 0, mi = INT_MAX;
+		for(int j = 0; j < D.size(); ++j) {
+			ma = max(ma, X[j][i]);
+			mi = min(mi, X[j][i]);
+		}
+		SCALE.push_back(ma - mi);
+		MIN.push_back(mi);
+	}
+}
+
+void init_w() {
+	/*
+	uniform_real_distribution<double> unif(-1, 1);
+	random_device rand_dev;
+	mt19937 rand_engine(rand_dev());
+	*/
+
+	default_random_engine generator;
+	normal_distribution<double> distribution(0.0, 1.0);
+
+	for(int i = 1; i < DIM.size(); ++i) {
+		for(int j = 0; j < DIM[i - 1]; ++j) {
+			for(int k = 1; k < DIM[i]; ++k) {
+				//W[i][j][k] = unif(rand_engine);
+				W[i][j][k] = distribution(generator);
+				//W[i][j][k] = 1;
+			}
+		}
+	}
+}
+
+double tanh(double s) {
+	if(s > 0) {
+		return (1 - exp(-2*s)) / (1 + exp(-2*s));
+	} else {
+		return (exp(2*s) - 1) / (exp(2*s) + 1);
+	}
+}
+
+double tanhh(double s) {
+	if(s > 0) {
+		return 4.0 / pow(1 + exp(-2*s), 2) * exp(-2*s);
+	} else {
+		return 4.0 / pow(exp(2*s) + 1, 2) * exp(2*s);
+	}
+}
+
+void nn_solve(double lrate, int n) {
+	//cout << "nn_solve" << endl;
+	memset(TMP_W, 0, sizeof(TMP_W));
+	for(int i = 0; i < n; ++i) {
+		int idx = rand() % D.size();
+		memset(NN_X, 0, sizeof(NN_X));
+		memset(DELTA, 0, sizeof(DELTA));
+
+		for(int j = 1; j < DIM[0]; ++j) {
+			NN_X[0][j] = 1.0 * X[idx][j - 1];
+			if(SCALE[j - 1] > eps) {
+				NN_X[0][j] = (NN_X[0][j] - MIN[j - 1]) / SCALE[j - 1];
+			}
+		}
+		for(int j = 1; j < DIM.size(); ++j) {  //j for layer
+			NN_X[j - 1][0] = 1.0;
+			for(int k = 0; k < DIM[j - 1]; ++k) {
+				for(int l = 1; l < DIM[j]; ++l) {
+					if(j == 1) {
+						NN_X[j][l] += W[j][k][l] * NN_X[j - 1][k];
+					} else {
+						NN_X[j][l] += W[j][k][l] * tanh(NN_X[j - 1][k]);
+					}
+				}
+			}
+		}
+		for(int j = DIM.size() - 1; j > 0; --j) {  //j for layer
+			for(int k = 1; k < DIM[j]; ++k) {  //k for dimension in j-layer
+				if(j == DIM.size() - 1) {
+					DELTA[j][k] = -2.0 * (Y[idx] - NN_X[j][k]);
+					//cout << "DELTA " << DELTA[j][k] << " NN_X " << NN_X[j][k] << endl;
+					continue;
+				}
+				//cout << "DELTA " << DELTA[j][k] << endl;
+				for(int l = 1; l < DIM[j + 1]; ++l) {
+					DELTA[j][k] += DELTA[j + 1][l] * W[j + 1][k][l] * tanhh(NN_X[j][k]);
+					//cout << "DELTA[j + 1][l] " << DELTA[j + 1][l] << " W[j + 1][k][l] " << W[j + 1][k][l] << " NN_X[j][k] " << NN_X[j][k] << " tanhh " << tanhh(NN_X[j][k]) << endl;
+				}
+				//cout << "DELTA " << DELTA[j][k] << endl;
+			}
+		}
+		for(int j = 1; j < DIM.size(); ++j) {  //j for layer
+			for(int k = 0; k < DIM[j - 1]; ++k) {
+				for(int l = 1; l < DIM[j]; ++l) {
+					TMP_W[j][k][l] += NN_X[j - 1][k] * DELTA[j][l];
+				}
+			}
+		}
+	}
+	for(int i = 1; i < DIM.size(); ++i) {
+		for(int j = 0; j < DIM[i - 1]; ++j) {
+			for(int k = 1; k < DIM[i]; ++k) {
+				//cout << "i j k " << i << ' ' << j << ' ' << k<< ' ' << lrate << ' ' << (TMP_W[i][j][k] / n) << endl;
+				W[i][j][k] -= lrate * (TMP_W[i][j][k] / n);
+			}
+		}
+	}
+}
+
+void write_model(string s) {
+	s += ".model";
+	int sz = -1;
+	for(int i = 0; i < s.size(); ++i) {
+		if(s[i] == '/')
+			sz = i;
+	}
+	if(sz != -1) {
+		s = s.substr(sz + 1);
+	}
+	
+	ofstream f_name(s, fstream::app);
+	f_name << SCALE.size() << endl;
+	for(int i = 0; i < SCALE.size(); ++i) {
+		f_name << SCALE[i] << ' ';
+	}
+	f_name << endl;
+	for(int i = 0; i < MIN.size(); ++i) {
+		f_name << MIN[i] << ' ';
+	}
+	f_name << endl;
+	f_name << DIM.size() << endl;
+	for(int i = 0; i < DIM.size(); ++i) {
+		f_name << DIM[i] << ' ';
+	}
+	f_name << endl;
+
+	for(int i = 1; i < DIM.size(); ++i) {
+		for(int j = 0; j < DIM[i - 1]; ++j) {
+			for(int k = 1; k < DIM[i]; ++k) {
+				f_name << W[i][j][k] << ' ';
+			}
+			f_name << endl;
+		}
+	}
+	f_name.close();
+}
+
+int main(int argc, char *argv[]) {
+	if(argc <= 5) {
+		cout << "usage nn-train [train_dat] [# of iter] [N' each time] [lrate] [<# of 1 layer>, <# of 2 layer>, ...]" << endl;
+		return 0;
+	}
+
+	srand(time(NULL));
+
+	for(int i = 5; i < argc; ++i) {
+		if(stoi(argv[i]) >= MAXD) {
+			cout << "MAXD error" << endl;
+			return 0;
+		}
+	}
+	
+	srand(time(NULL));
+
+	read_data(argv[1]);
+
+	parse_data();
+
+	scale_data();
+
+	DIM.push_back(X[0].size() + 1);
+	for(int i = 5; i < argc; ++i) {
+		DIM.push_back(stoi(argv[i]) + 1);
+	}
+	DIM.push_back(2);
+
+	init_w();
+
+	for(int iter = 0; iter < stoi(argv[2]); ++iter) {
+		nn_solve(stod(argv[4]), D.size() * stoi(argv[3]) / 100);
+	}
+
+	write_model(argv[1]);
+
+	return 0;
+}

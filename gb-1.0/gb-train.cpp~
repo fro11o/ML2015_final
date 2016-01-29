@@ -1,0 +1,256 @@
+#include <iostream>
+#include <cstdlib>
+#include <vector>
+#include <string>
+#include <fstream>
+#include <sstream>
+#include <algorithm>
+using namespace std;
+
+const int MAXN = 100000;
+const double eps = 1e-6;
+
+vector<string> D;
+vector<double> X[MAXN];
+vector<int> Y;
+vector<double> S;
+
+struct node {
+	int s, i, ch[2];
+	double theta, ans;
+}typedef Node;
+
+vector<Node> v_node;
+vector<pair<double, pair<double, int> > > x_y_idx;
+
+void read_data(string f_name) {
+	ifstream f;
+	f.open(f_name);
+	string fstr;
+	while(getline(f, fstr)) {
+		D.push_back(fstr);
+	}
+	f.close();
+}
+
+void parse_data() {
+	for(int i = 0; i < D.size(); ++i) {
+		stringstream ss(D[i]);
+		vector<string> v;
+		string tmp;
+		while(ss >> tmp) {
+			v.push_back(tmp);
+		}
+		//cout << D[i] << endl;
+		Y.push_back(stoi(v[0]));
+		for(int j = 1; j < v.size(); ++j) {
+			int idx = 0;
+			while(v[j][idx] != ':') {
+				++idx;
+			}
+			string sub = v[j].substr(idx + 1);
+			X[i].push_back(stod(sub));
+		}
+	}
+}
+
+void s_init() {
+	for(int i = 0; i < D.size(); ++i) {
+		S.push_back(0);
+	}
+}
+
+void print_data() {
+	cout << "# of data: " << Y.size() << endl;
+	cout << "Dimension: " << X[0].size() << endl;
+	for(int i = 0; i < Y.size(); ++i) {
+		cout << Y[i] << '!';
+		for(int j = 0; j < X[i].size(); ++j) {
+			cout << X[i][j] << '@';
+		}
+		cout << endl;
+	}
+}
+
+int dt_dfs(int L, int R, int height) {
+	//cout << "here is L R " << L << ' ' << R << endl;
+	Node cur_node;
+	double t_impurity = 1e9;
+	int leaf_check;
+	for(int i = 0; i < X[0].size(); ++i) {
+		for(int j = L; j < R; ++j) {
+			int idx = (x_y_idx[j].second).second;
+			x_y_idx[j].first = X[idx][i];
+		}
+		sort(x_y_idx.begin() + L, x_y_idx.begin() + R);
+
+		vector<double> sum;
+		sum.push_back(0);
+		vector<int> cut_location;
+		cut_location.push_back(L);
+		for(int j = L; j < R; ++j) {
+			int idx = j;
+			double tmp_sum = 0;
+			while(j < R && fabs(x_y_idx[j].first - x_y_idx[idx].first) < eps) {
+				tmp_sum += (x_y_idx[j].second).first;
+				++j;
+			}
+			--j;
+			sum.push_back(sum[sum.size() - 1] + tmp_sum);
+			cut_location.push_back(j + 1);
+		}
+		for(int j = 0; j < cut_location.size() - 1; ++j) {  //ignore the last one
+			double cut = cut_location[j];
+			//cut into [L, cut) and [cut, R)
+			double avg[2];
+			avg[0] = sum[j] / (cut - L);  //may be nan
+			avg[1] = (sum[sum.size() - 1] - sum[j]) / (R - cut);
+			double err[2] = {0, 0};
+			for(int k = L; k < cut; ++k) {
+				err[0] += pow((x_y_idx[k].second).first - avg[0], 2);
+			}
+			err[0] /= (cut - L);
+			for(int k = cut; k < R; ++k) {
+				err[1] += pow((x_y_idx[k].second).first - avg[1], 2);
+			}
+			err[1] /= (R - cut);
+
+			double impurity = 0;
+			if(cut - L > 0) {
+				impurity += (cut - L) * err[0];
+			} 
+			if(R - cut > 0) {
+				impurity += (R - cut) * err[1];
+			}
+
+			//cout << "impurity " << impurity << endl;
+			if(impurity + eps < t_impurity) {
+				cur_node.s = 1;
+				cur_node.i = i;
+				if(cut == L) {
+					cur_node.theta = -1e7;
+				} else {
+					cur_node.theta = (x_y_idx[cut].first + x_y_idx[cut - 1].first) / 2;
+				}
+				leaf_check = cut;
+				//cout << "cut leaf_check " << cut << ' ' << leaf_check << endl;
+				t_impurity = impurity;
+			}
+		}
+		//cout << "t_impurity " << t_impurity << endl;
+	}
+
+	for(int j = L; j < R; ++j) {
+		int idx = (x_y_idx[j].second).second;
+		x_y_idx[j].first = X[idx][cur_node.i];
+	}
+	sort(x_y_idx.begin() + L, x_y_idx.begin() + R);
+
+	//cout << "L R leaf_check " << L << ' ' << R << ' ' << leaf_check << endl;
+
+	if(leaf_check == L || leaf_check == R || height == 0) {
+		cur_node.ch[0] = cur_node.ch[1] = -1;
+		cur_node.ans = 0;
+		for(int i = L; i < R; ++i) {
+			cur_node.ans += (x_y_idx[i].second).first;
+		}
+		cur_node.ans /= (R - L);
+	} else {
+		//if output of h_s_i_theta positive go to ch[1], negative go to ch[0]
+		cur_node.ch[0] = dt_dfs(L, leaf_check, height - 1);
+		cur_node.ch[1] = dt_dfs(leaf_check, R, height - 1);
+	}
+	v_node.push_back(cur_node);
+	return v_node.size() - 1;
+}
+
+void write_model(string s, double alpha) {
+	s += ".model";
+	int sz = -1;
+	for(int i = 0; i < s.size(); ++i) {
+		if(s[i] == '/')
+			sz = i;
+	}
+	if(sz != -1) {
+		s = s.substr(sz + 1);
+	}
+	
+	ofstream f_name(s, fstream::app);
+	f_name << v_node.size() << ' ' << alpha << endl;
+	for(int i = 0; i < v_node.size(); ++i) {
+		f_name << v_node[i].s;
+		f_name << ' ' << v_node[i].i;
+		f_name << ' ' << v_node[i].theta << ' ' << v_node[i].ans
+			   << ' ' << v_node[i].ch[0] << ' ' << v_node[i].ch[1] << endl;
+	}
+	f_name.close();
+}
+
+double predict(int idx, int x) {
+	if(v_node[x].ch[0] == -1) {
+		return v_node[x].ans;
+	}
+	int ns = v_node[x].s;
+	int ni = v_node[x].i;
+	double ntheta = v_node[x].theta;
+	if(ns * (X[idx][ni] - ntheta) > 0) {
+		return predict(idx, v_node[x].ch[1]);
+	} else {
+		return predict(idx, v_node[x].ch[0]);
+	}
+}
+
+double one_var_linear_regression() {
+	double d1 = 0, d2 = 0;
+	for(int i = 0; i < D.size(); ++i) {
+		d1 += predict(i, v_node.size() - 1) * (Y[i] - S[i]);
+		d2 += pow(predict(i, v_node.size() - 1), 2);
+	}
+	return d1 / d2;
+}
+
+void gb(int T, string s, int height) {
+
+	s_init();
+
+	for(int t = 0; t < T; ++t) {
+
+		for(int i = 0; i < D.size(); ++i) {
+			x_y_idx[i] = make_pair(0, make_pair(Y[i] - S[i], i));
+		}
+
+		v_node.clear();
+
+		dt_dfs(0, D.size(), height);
+
+		double alpha = one_var_linear_regression();
+
+		for(int i = 0; i < D.size(); ++i) {
+			S[i] = S[i] + alpha * predict(i, v_node.size() - 1);
+		}
+
+		write_model(s, alpha);
+	}
+}
+
+
+int main(int argc, char *argv[]) {
+	if(argc != 4) {
+        cout << "usage: ./a.out [train.dat] [# of iter] [max height]" << endl;
+		return 0;
+	}
+
+	read_data(argv[1]);
+
+	parse_data();
+
+	//print_data();	
+
+	for(int i = 0; i < D.size(); ++i) {
+		x_y_idx.push_back(make_pair(0, make_pair(0, 0)));  // 0 is a no-means number
+	}
+
+	gb(stoi(argv[2]), argv[1], stoi(argv[3]));
+
+	return 0;
+}
